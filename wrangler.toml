@@ -1,0 +1,14 @@
+name = "shopscout-mcp"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+[vars]
+CURRENCY = "USD"   # target currency for prices
+LANGUAGE = "EN"
+SHIP_TO = "DZ"     # ship-to country code
+
+# Secrets (set with `npx wrangler secret put NAME`, never commit them):
+#   AE_APP_KEY      – App Key from the Open Platform console
+#   AE_APP_SECRET   – App Secret
+#   AE_TRACKING_ID  – affiliate tracking id (optional, for affiliate links)
+#   ACCESS_TOKEN    – long random string; becomes part of the connector URL
