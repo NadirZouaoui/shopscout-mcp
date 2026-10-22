@@ -3,7 +3,7 @@ main = "src/index.js"
 compatibility_date = "2026-01-01"
 
 [vars]
-CURRENCY = "USD"   # target currency for prices
+CURRENCY = "EUR"   # target currency for prices
 LANGUAGE = "EN"
 SHIP_TO = "DZ"     # ship-to country code
 

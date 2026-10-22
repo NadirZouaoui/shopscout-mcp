@@ -41,7 +41,7 @@ npx wrangler secret put AE_TRACKING_ID
 npm run deploy
 ```
 
-Currency, language and ship-to country are set in `wrangler.toml` (default USD / EN / DZ).
+Currency, language and ship-to country are set in `wrangler.toml` (default EUR / EN / DZ).
 
 ## Connect to Claude
 
