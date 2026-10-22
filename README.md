@@ -1,6 +1,6 @@
 # ShopScout MCP
 
-AI shopping assistant tool built by an electrical engineer. It connects AliExpress product search and details to an AI chat assistant (via MCP), so users can compare electronics such as WiFi adapters, PC accessories and solar equipment by specs, price and ratings, and open the products they choose through affiliate links.
+An MCP server that connects AliExpress product search, details and reviews to an AI chat assistant, so products can be compared by specs, price and ratings right in the chat.
 
 It runs as a small remote MCP server on Cloudflare Workers (free tier). Once deployed, it can be added as a custom connector in Claude and used from web, desktop or mobile.
 

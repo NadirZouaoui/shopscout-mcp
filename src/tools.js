@@ -1,4 +1,4 @@
-import { callApi, compactProduct, asArray } from "./aliexpress.js";
+import { callApi, compactProduct, withAffiliateLink, asArray } from "./aliexpress.js";
 import { scrapeSearch, scrapeProduct, scrapeReviews } from "./scrape.js";
 
 // "api" when keys are configured, otherwise "scrape". MODE env var overrides.
@@ -114,7 +114,10 @@ export const TOOLS = [
         country: d.country,
         tracking_id: env.AE_TRACKING_ID,
       });
-      return { source: "api", products: asArray(result?.products?.product).map(compactProduct) };
+      return {
+        source: "api",
+        products: asArray(result?.products?.product).map((p) => withAffiliateLink(compactProduct(p), p)),
+      };
     },
   },
   {

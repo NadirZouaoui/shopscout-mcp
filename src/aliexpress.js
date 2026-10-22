@@ -64,8 +64,13 @@ export function compactProduct(p) {
     orders_30d: p.lastest_volume,
     category: [p.first_level_category_name, p.second_level_category_name].filter(Boolean).join(" > ") || undefined,
     shop: p.shop_name,
-    link: p.promotion_link || p.product_detail_url,
+    link: `https://www.aliexpress.com/item/${p.product_id}.html`,
   };
+}
+
+// Affiliate links are ~800 chars each, so they're only included where asked for (get_product).
+export function withAffiliateLink(compact, p) {
+  return p.promotion_link ? { ...compact, affiliate_link: p.promotion_link } : compact;
 }
 
 export function asArray(x) {
