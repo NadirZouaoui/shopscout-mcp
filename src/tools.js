@@ -1,4 +1,11 @@
 import { callApi, compactProduct, asArray } from "./aliexpress.js";
+import { scrapeSearch, scrapeProduct, scrapeReviews } from "./scrape.js";
+
+// "api" when keys are configured, otherwise "scrape". MODE env var overrides.
+export function mode(env) {
+  if (env.MODE === "api" || env.MODE === "scrape") return env.MODE;
+  return env.AE_APP_KEY && env.AE_APP_SECRET ? "api" : "scrape";
+}
 
 function defaults(env) {
   return {
@@ -14,12 +21,36 @@ function extractId(input) {
   return m ? m[1] : null;
 }
 
+async function resolveShortLink(url) {
+  // Short share links redirect to the item page.
+  const res = await fetch(url, { method: "GET", redirect: "follow", headers: { "User-Agent": "Mozilla/5.0" } });
+  const id = extractId(res.url);
+  if (id) return id;
+  // Some short links land on an interstitial that contains the item URL in the body.
+  const body = await res.text();
+  return extractId(body.match(/aliexpress\.com\/item\/\d+/)?.[0] || "");
+}
+
+async function toIds(input) {
+  const parts = String(input).split(/[,\s]+/).filter(Boolean).slice(0, 20);
+  const ids = [];
+  for (const p of parts) {
+    let id = extractId(p);
+    if (!id && /^https?:\/\/(a|s\.click)\.aliexpress\.com\//.test(p)) {
+      try { id = await resolveShortLink(p); } catch { /* ignore */ }
+    }
+    if (id) ids.push(id);
+  }
+  if (!ids.length) throw new Error("No product id found in the input.");
+  return ids;
+}
+
 export const TOOLS = [
   {
     name: "search_products",
     description:
-      "Search products by keyword. Returns a compact list (id, title, price, rating, 30-day orders, shop, link). " +
-      "Use get_product with an id for full details.",
+      "Search products by keyword. Returns a compact list (id, title, price, rating, orders, shop, link). " +
+      "Use get_product with ids for specs and details.",
     inputSchema: {
       type: "object",
       properties: {
@@ -37,6 +68,7 @@ export const TOOLS = [
       required: ["keywords"],
     },
     async run(args, env) {
+      if (mode(env) === "scrape") return scrapeSearch(args, env);
       const d = defaults(env);
       const result = await callApi(env, "aliexpress.affiliate.product.query", {
         keywords: args.keywords,
@@ -51,35 +83,29 @@ export const TOOLS = [
         tracking_id: env.AE_TRACKING_ID,
       });
       const products = asArray(result?.products?.product).map(compactProduct);
-      return { total: result?.total_record_count, page: result?.current_page_no, products };
+      return { source: "api", total: result?.total_record_count, page: result?.current_page_no, products };
     },
   },
   {
     name: "get_product",
     description:
-      "Get details for one or more products by id or product URL (up to 20, comma-separated). " +
-      "Includes price, rating, orders, category, shop and an affiliate link.",
+      "Get details for products by id, full URL or short share link (comma-separated, up to 20; up to 5 in scrape mode). " +
+      "In scrape mode includes the spec table and variant options, which often name the chipset.",
     inputSchema: {
       type: "object",
       properties: {
-        products: {
-          type: "string",
-          description: "Product ids or URLs, comma-separated",
-        },
+        products: { type: "string", description: "Product ids or URLs, comma-separated" },
       },
       required: ["products"],
     },
     async run(args, env) {
-      const parts = String(args.products).split(/[,\s]+/).filter(Boolean).slice(0, 20);
-      const ids = [];
-      for (const p of parts) {
-        let id = extractId(p);
-        if (!id && /^https?:\/\/(a|s\.click)\.aliexpress\.com\//.test(p)) {
-          try { id = extractId(await resolveShortLink(p)); } catch { /* ignore */ }
-        }
-        if (id) ids.push(id);
+      const ids = await toIds(args.products);
+      if (mode(env) === "scrape") {
+        const results = await Promise.all(
+          ids.slice(0, 5).map((id) => scrapeProduct(id, env).catch((e) => ({ id, error: String(e.message || e) })))
+        );
+        return { source: "scrape", products: results };
       }
-      if (!ids.length) throw new Error("No product id found in the input.");
       const d = defaults(env);
       const result = await callApi(env, "aliexpress.affiliate.productdetail.get", {
         product_ids: ids.join(","),
@@ -88,13 +114,27 @@ export const TOOLS = [
         country: d.country,
         tracking_id: env.AE_TRACKING_ID,
       });
-      return { products: asArray(result?.products?.product).map(compactProduct) };
+      return { source: "api", products: asArray(result?.products?.product).map(compactProduct) };
+    },
+  },
+  {
+    name: "get_reviews",
+    description:
+      "Get buyer reviews for one product (text trimmed, newest-relevant first). Useful to confirm chipsets, real speeds or defects. " +
+      "Reads the public reviews feed, works without API keys.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        product: { type: "string", description: "Product id or URL" },
+        page: { type: "integer", minimum: 1, default: 1 },
+        page_size: { type: "integer", minimum: 1, maximum: 20, default: 10 },
+        with_photos: { type: "boolean", description: "Only reviews with photos" },
+      },
+      required: ["product"],
+    },
+    async run(args, env) {
+      const [id] = await toIds(args.product);
+      return scrapeReviews({ ...args, id }, env);
     },
   },
 ];
-
-export async function resolveShortLink(url) {
-  // a.aliexpress.com short links redirect to the item page; follow without downloading the body.
-  const res = await fetch(url, { method: "HEAD", redirect: "follow" });
-  return res.url;
-}
