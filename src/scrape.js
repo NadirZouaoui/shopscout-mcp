@@ -185,14 +185,14 @@ export async function scrapeReviews(args, env) {
   try { data = JSON.parse(body); } catch {
     throw new Error(`Reviews request returned non-JSON (HTTP ${res.status}); likely blocked.`);
   }
-  const list = data?.data?.evaViewList || [];
+  const list = (data?.data?.evaViewList || []).slice(0, Math.min(args.page_size || 10, 20)); // feed ignores pageSize
   return {
     total: data?.data?.totalNum,
     reviews: list.map((r) => ({
       stars: r.buyerEval ? Math.round(r.buyerEval / 20) : undefined,
       date: r.evalDate,
       country: r.buyerCountry,
-      variant: r.skuInfo,
+      variant: r.skuInfo?.trim(),
       text: (r.buyerTranslationFeedback || r.buyerFeedback || "").slice(0, 600),
       photos: r.images?.length || 0,
     })),

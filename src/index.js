@@ -3,7 +3,7 @@
 
 import { TOOLS } from "./tools.js";
 
-const SERVER_INFO = { name: "shopscout-mcp", version: "0.1.0" };
+const SERVER_INFO = { name: "shopscout-mcp", version: "0.2.0" };
 const DEFAULT_PROTOCOL = "2025-06-18";
 
 const json = (body, status = 200) =>

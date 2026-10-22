@@ -24,7 +24,7 @@ globalThis.fetch = async (url) => {
     : u.includes("/item/") ? itemPage
     : u.includes("searchEvaluation") ? JSON.stringify(reviewsJson)
     : u.includes("a.aliexpress.com") ? null : "";
-  if (page === null) { const r = new Response(""); Object.defineProperty(r, "url", { value: "https://www.aliexpress.com/item/1005003333333333.html" }); return r; }
+  if (page === null) return new Response(null, { status: 302, headers: { location: "https://www.aliexpress.com/item/1005003333333333.html" } });
   return new Response(page);
 };
 

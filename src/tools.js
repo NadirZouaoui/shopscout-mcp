@@ -15,34 +15,66 @@ function defaults(env) {
   };
 }
 
-function extractId(input) {
-  const s = String(input).trim();
-  const m = s.match(/item\/(\d+)/) || s.match(/(\d{10,})/);
-  return m ? m[1] : null;
+const SHORT_LINK = /^(https?:\/\/)?(a|s\.click|star)\.aliexpress\.com\//i;
+
+// Strict id extraction: only from /item/<id> paths or productId-style params,
+// never from arbitrary long numbers (tracking params contain those too).
+export function extractId(input) {
+  let s = String(input).trim();
+  if (/^\d{10,20}$/.test(s)) return s;
+  for (let i = 0; i < 3; i++) {
+    const m =
+      s.match(/\/item\/(?:[^/?#]*\/)?(\d{10,20})(?:\.html)?/) ||
+      s.match(/[?&](?:productIds?|itemId|objectId|product_id)=(\d{10,20})/i);
+    if (m) return m[1];
+    try { const d = decodeURIComponent(s); if (d === s) break; s = d; } catch { break; } // ids may sit inside encoded redirect params
+  }
+  return null;
 }
 
-async function resolveShortLink(url) {
-  // Short share links redirect to the item page.
-  const res = await fetch(url, { method: "GET", redirect: "follow", headers: { "User-Agent": "Mozilla/5.0" } });
-  const id = extractId(res.url);
-  if (id) return id;
-  // Some short links land on an interstitial that contains the item URL in the body.
-  const body = await res.text();
-  return extractId(body.match(/aliexpress\.com\/item\/\d+/)?.[0] || "");
+// Follow redirects by hand so every hop's Location can be inspected; the item id
+// usually appears in an intermediate URL even when the final page is a login/landing page.
+export async function resolveShortLink(url) {
+  let current = /^https?:/i.test(url) ? url : "https://" + url;
+  const hops = [];
+  for (let i = 0; i < 8; i++) {
+    const res = await fetch(current, {
+      redirect: "manual",
+      headers: { "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36" },
+    });
+    hops.push(`${res.status} ${current.slice(0, 120)}`);
+    const loc = res.headers.get("location");
+    if (loc) {
+      current = new URL(loc, current).toString();
+      const id = extractId(current);
+      if (id) return { id, hops };
+      continue;
+    }
+    // No redirect: the page may use a JS/meta redirect with the item URL inside.
+    const body = await res.text();
+    const id = extractId(body.match(/https?:[^"'\s<>]*aliexpress\.com\/item\/[^"'\s<>]+/)?.[0] || "")
+      || extractId(body.match(/[?&](?:productIds?|itemId)=\d{10,20}/)?.[0] || "");
+    return { id, hops };
+  }
+  return { id: null, hops };
 }
 
 async function toIds(input) {
   const parts = String(input).split(/[,\s]+/).filter(Boolean).slice(0, 20);
-  const ids = [];
+  const ids = [], failed = [];
   for (const p of parts) {
     let id = extractId(p);
-    if (!id && /^https?:\/\/(a|s\.click)\.aliexpress\.com\//.test(p)) {
-      try { id = await resolveShortLink(p); } catch { /* ignore */ }
-    }
+    if (!id && SHORT_LINK.test(p)) {
+      try {
+        const r = await resolveShortLink(p);
+        id = r.id;
+        if (!id) failed.push(`${p} (redirects: ${r.hops.join(" -> ")})`);
+      } catch (e) { failed.push(`${p} (${e.message})`); }
+    } else if (!id) failed.push(p);
     if (id) ids.push(id);
   }
-  if (!ids.length) throw new Error("No product id found in the input.");
-  return ids;
+  if (!ids.length) throw new Error("No product id found. Unresolved: " + failed.join("; "));
+  return { ids, failed };
 }
 
 export const TOOLS = [
@@ -83,6 +115,10 @@ export const TOOLS = [
         tracking_id: env.AE_TRACKING_ID,
       });
       const products = asArray(result?.products?.product).map(compactProduct);
+      // The API's volume sort uses its own sales counter, not the 30-day figure we show,
+      // so re-sort the page by orders_30d to match what the user sees.
+      if (args.sort === "LAST_VOLUME_DESC") products.sort((a, b) => (b.orders_30d || 0) - (a.orders_30d || 0));
+      if (args.sort === "LAST_VOLUME_ASC") products.sort((a, b) => (a.orders_30d || 0) - (b.orders_30d || 0));
       return { source: "api", total: result?.total_record_count, page: result?.current_page_no, products };
     },
   },
@@ -99,12 +135,13 @@ export const TOOLS = [
       required: ["products"],
     },
     async run(args, env) {
-      const ids = await toIds(args.products);
+      const { ids, failed } = await toIds(args.products);
+      const unresolved = failed.length ? failed : undefined;
       if (mode(env) === "scrape") {
         const results = await Promise.all(
           ids.slice(0, 5).map((id) => scrapeProduct(id, env).catch((e) => ({ id, error: String(e.message || e) })))
         );
-        return { source: "scrape", products: results };
+        return { source: "scrape", products: results, unresolved };
       }
       const d = defaults(env);
       const result = await callApi(env, "aliexpress.affiliate.productdetail.get", {
@@ -114,9 +151,16 @@ export const TOOLS = [
         country: d.country,
         tracking_id: env.AE_TRACKING_ID,
       });
+      const products = asArray(result?.products?.product).map((p) => withAffiliateLink(compactProduct(p), p));
+      // Never fail silently: report ids the API didn't return (not in the affiliate program, or delisted).
+      const missing = ids.filter((id) => !products.some((p) => p.id === id));
       return {
         source: "api",
-        products: asArray(result?.products?.product).map((p) => withAffiliateLink(compactProduct(p), p)),
+        products,
+        not_found: missing.length
+          ? missing.map((id) => `${id}: not returned by the affiliate API (may not be in the affiliate program); try get_reviews or the item page`)
+          : undefined,
+        unresolved,
       };
     },
   },
@@ -159,7 +203,7 @@ export const TOOLS = [
   {
     name: "get_reviews",
     description:
-      "Get buyer reviews for one product (text trimmed, newest-relevant first). Useful to confirm chipsets, real speeds or defects. " +
+      "Get buyer reviews for one product (text trimmed, in the site's relevance order). Useful to confirm chipsets, real speeds or defects. " +
       "Reads the public reviews feed, works without API keys.",
     inputSchema: {
       type: "object",
@@ -172,7 +216,7 @@ export const TOOLS = [
       required: ["product"],
     },
     async run(args, env) {
-      const [id] = await toIds(args.product);
+      const { ids: [id] } = await toIds(args.product);
       return scrapeReviews({ ...args, id }, env);
     },
   },
