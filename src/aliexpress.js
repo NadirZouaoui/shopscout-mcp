@@ -45,6 +45,8 @@ export async function callApi(env, method, apiParams) {
   const key = Object.keys(data).find((k) => k.endsWith("_response"));
   const rr = key ? data[key].resp_result : undefined;
   if (!rr) throw new Error("Unexpected API response: " + JSON.stringify(data).slice(0, 300));
+  // 405 "The result is empty" just means no matches; return an empty result instead of an error.
+  if (String(rr.resp_code) === "405") return { total_record_count: 0, products: { product: [] } };
   if (rr.resp_code !== 200 && rr.resp_code !== "200") {
     throw new Error(`AliExpress API ${rr.resp_code}: ${rr.resp_msg}`);
   }
