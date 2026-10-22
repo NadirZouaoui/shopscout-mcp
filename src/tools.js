@@ -165,6 +165,34 @@ export const TOOLS = [
     },
   },
   {
+    name: "debug_api",
+    description:
+      "Diagnostics: call any affiliate API method with raw parameters and return the raw JSON (trimmed to 6000 chars). " +
+      "app_key, signing, currency, language and tracking_id are filled in automatically. Use only to explore API fields.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        method: { type: "string", description: "e.g. aliexpress.affiliate.productdetail.get" },
+        params: { type: "object", description: "Method parameters as key/value pairs" },
+      },
+      required: ["method"],
+    },
+    async run(args, env) {
+      const d = defaults(env);
+      const params = {
+        target_currency: d.target_currency, target_language: d.target_language,
+        tracking_id: env.AE_TRACKING_ID, ...(args.params || {}),
+      };
+      try {
+        const result = await callApi(env, args.method, params);
+        const raw = JSON.stringify(result);
+        return raw.length > 6000 ? { truncated: true, raw: raw.slice(0, 6000) } : result;
+      } catch (e) {
+        return { error: e.message };
+      }
+    },
+  },
+  {
     name: "debug_fetch",
     description:
       "Diagnostics: fetch a URL from the server the way the scraper does and report status, redirects, page title, " +
