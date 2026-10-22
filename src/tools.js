@@ -118,6 +118,42 @@ export const TOOLS = [
     },
   },
   {
+    name: "debug_fetch",
+    description:
+      "Diagnostics: fetch a URL from the server the way the scraper does and report status, redirects, page title, " +
+      "which embedded-data markers exist, and short snippets. Use only when other tools fail.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string" },
+        find: { type: "string", description: "Optional text to locate; returns 300 chars around the first match" },
+      },
+      required: ["url"],
+    },
+    async run(args, env) {
+      const res = await fetch(args.url, {
+        redirect: "follow",
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+          "Accept-Language": "en-US,en;q=0.9",
+          "Cookie": `aep_usuc_f=site=glo&c_tp=${env.CURRENCY || "USD"}&region=${env.SHIP_TO || "DZ"}&b_locale=en_US`,
+        },
+      });
+      const t = await res.text();
+      const markers = ["_init_data_", "runParams", "DCData", "__INITIAL_STATE__", "productId", "itemList",
+        "attrName", "punish", "captcha", "x5sec", "baxia", "og:title", "item/"];
+      const at = (s) => { const i = t.indexOf(s); return i < 0 ? undefined : t.slice(Math.max(0, i - 100), i + 200); };
+      return {
+        status: res.status, final_url: res.url, redirected: res.redirected, length: t.length,
+        title: t.match(/<title>([^<]*)<\/title>/i)?.[1],
+        markers: Object.fromEntries(markers.map((m) => [m, t.split(m).length - 1])),
+        scripts: [...t.matchAll(/(window\.[\w.$]+|_d_c_\.\w+)\s*=/g)].map((m) => m[1]).slice(0, 25),
+        find: args.find ? at(args.find) : undefined,
+        head: t.slice(0, 600),
+      };
+    },
+  },
+  {
     name: "get_reviews",
     description:
       "Get buyer reviews for one product (text trimmed, newest-relevant first). Useful to confirm chipsets, real speeds or defects. " +
