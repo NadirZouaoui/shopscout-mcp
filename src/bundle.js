@@ -75,6 +75,7 @@ export function parseBundlePage(html) {
   let streamId;
   try { streamId = JSON.parse(wf.extraInfo || "{}").streamId; } catch {}
   return {
+    components: comps.map((c) => `${c.compName}:${Array.isArray(c.fields?.data) ? c.fields.data.length : "-"}`),
     items,
     tiers,
     waterfall: wf.reqExt && wf.itemResourceId
@@ -104,10 +105,18 @@ async function fetchBundlePage(env) {
   if (merged.changed) await saveCookies(env, merged.cookies);
   const html = await r.text();
   const page = parseBundlePage(html);
+  const init = page ? null : extractAssigned(html, "window.__INIT_DATA__=");
+  const diag = {
+    status: r.status, final_url: r.url, length: html.length,
+    title: html.match(/<title>([^<]*)/)?.[1]?.slice(0, 80),
+    has_init_data: html.includes("__INIT_DATA__"),
+    components: page ? undefined : init?.data ? Object.values(init.data).map((c) => c.compName) : undefined,
+  };
+  if (page) page.diag = { ...diag, components: page.components };
   if (!page) {
     const why = /\/error\/404|404 page/i.test(r.url + html.slice(0, 3000)) ? "page returned 404 (session not accepted?)"
       : /punish|baxia|captcha/i.test(html.slice(0, 20000)) ? "blocked by bot check" : `no item data (status ${r.status})`;
-    throw new Error(`Bundle deals page unreadable: ${why}`);
+    throw new Error(`Bundle deals page unreadable: ${why}. ${JSON.stringify(diag)}`);
   }
   return { page, cookies: merged.cookies };
 }
@@ -185,6 +194,7 @@ export async function bundleDeals(env, { keywords = "", max_price, want = 10, ma
     pages_loaded: pagesLoaded,
     stop_reason: stopReason,
     basket_rules: ["Free shipping on 3+ items", ...page.tiers],
+    diagnostics: scanned === 0 ? page.diag : undefined,
     note: "Bundle prices apply when bought through Bundle deals. Use check_price with bundle=true on chosen ids for shipping and a basket total.",
   };
 }

@@ -220,7 +220,21 @@ export async function checkPrice(id, env, { fresh = false, bundle = false } = {}
     const hit = await env.SHOPSCOUT_KV.get(key, "json");
     if (hit) return { ...hit, cached: true };
   }
-  const out = { ...parsePdp(await fetchPdp(id, env, bundle ? BUNDLE_SOURCE : ""), id), ...(bundle ? { channel: "bundle" } : {}), checked_at: new Date().toISOString() };
+  let out = { ...parsePdp(await fetchPdp(id, env, bundle ? BUNDLE_SOURCE : ""), id), checked_at: new Date().toISOString() };
+  if (bundle) {
+    // Items outside the channel come back with no price or a list price: use the normal price instead.
+    const normal = await checkPrice(id, env, { fresh });
+    if (out.price_eur != null && normal.price_eur != null && out.price_eur < normal.price_eur) {
+      out = { ...out, channel: "bundle", in_bundle: true, normal_price_eur: normal.price_eur,
+        shipping: out.shipping ?? normal.shipping };
+      if (out.total_eur == null && out.shipping?.fee_eur != null) {
+        out.total_eur = round2(out.price_eur + out.shipping.fee_eur);
+        out.total_dzd = Math.round(out.total_eur * DZD_PER_EUR);
+      }
+    } else {
+      out = { ...normal, cached: undefined, channel: "normal", in_bundle: false, note: "Not in Bundle deals: normal price shown." };
+    }
+  }
   if (env.SHOPSCOUT_KV) await env.SHOPSCOUT_KV.put(key, JSON.stringify(out), { expirationTtl: CACHE_TTL });
   return out;
 }
@@ -241,7 +255,8 @@ export async function keepAlive(env) {
 // Bundle deals basket: free shipping from 3 items; tiered US$ discounts (as shown on the Bundle deals page).
 export const BUNDLE_TIERS = [{ items: 12, off_usd: 6 }, { items: 8, off_usd: 4 }, { items: 6, off_usd: 3 }];
 export function bundleBasket(items, env) {
-  const priced = items.filter((i) => typeof i.price_eur === "number");
+  const priced = items.filter((i) => typeof i.price_eur === "number" && i.in_bundle !== false);
+  const outside = items.filter((i) => i.in_bundle === false).map((i) => i.id);
   const count = priced.reduce((n, i) => n + (i.quantity || 1), 0);
   const subtotal = round2(priced.reduce((s, i) => s + i.price_eur * (i.quantity || 1), 0));
   const usdPerEur = Number(env.USD_PER_EUR) || 1.08;
@@ -265,6 +280,7 @@ export function bundleBasket(items, env) {
     total_dzd: Math.round((freeShipping || known ? total : subtotal - discountEur) * DZD_PER_EUR),
     next_step: count < 3 ? `add ${3 - count} more item(s) for free shipping`
       : next ? `add ${next.items - count} more for US $${next.off_usd} off` : undefined,
-    note: "Tier discounts are in US$, converted at the USD_PER_EUR setting; AliExpress applies the exact amount at checkout.",
+    not_in_bundle: outside.length ? outside : undefined,
+    note: "Only items in Bundle deals count toward the basket. Tier discounts are in US$, converted at the USD_PER_EUR setting; AliExpress applies the exact amount at checkout.",
   };
 }

@@ -75,11 +75,21 @@ ok("token refresh retry", calls === 2 && first.total_eur === 87.78 && store.get(
 const second = await checkPrice("1005009412750740", env);
 ok("kv cache", second.cached === true && calls === 2);
 
-// Bundle channel: sourceType 570 is sent, cached separately
-let sent = "";
-globalThis.fetch = async (u) => { sent = decodeURIComponent(String(u)); return new Response(`mtopjsonp1(${JSON.stringify({ ret: ["SUCCESS::ok"], data: { result } })})`); };
-const b = await checkPrice("1005009412750740", env, { bundle: true });
-ok("bundle sourceType + separate cache", /"sourceType":"570"/.test(sent) && b.channel === "bundle" && !b.cached);
+// Bundle channel: sourceType 570 is sent; a lower bundle price is used, otherwise the normal price
+let sentBundle = false;
+const bundleResult = { ...result, PRICE: { ...result.PRICE, targetSkuPriceInfo: { ...result.PRICE.targetSkuPriceInfo, salePriceString: "€70.00" } } };
+globalThis.fetch = async (u) => {
+  const isBundle = /"sourceType":"570"/.test(decodeURIComponent(String(u)));
+  sentBundle ||= isBundle;
+  return new Response(`mtopjsonp1(${JSON.stringify({ ret: ["SUCCESS::ok"], data: { result: isBundle ? bundleResult : result } })})`);
+};
+const b = await checkPrice("1005009412750740", env, { bundle: true, fresh: true });
+ok("bundle price used when lower", sentBundle && b.channel === "bundle" && b.in_bundle && b.price_eur === 70 && b.normal_price_eur === 81.83 && b.total_eur === 75.95);
+globalThis.fetch = async () => new Response(`mtopjsonp1(${JSON.stringify({ ret: ["SUCCESS::ok"], data: { result } })})`);
+const nb = await checkPrice("1005000000000001", env, { bundle: true, fresh: true });
+ok("not in bundle -> normal price", nb.channel === "normal" && nb.in_bundle === false && nb.price_eur === 81.83);
+const mixed = bundleBasket([{ id: "a", price_eur: 7, in_bundle: true, shipping: { fee_eur: 0 } }, { id: "b", price_eur: 50, in_bundle: false }], {});
+ok("basket ignores items outside bundle", mixed.items === 1 && mixed.not_in_bundle[0] === "b");
 
 const item = (price, fee) => ({ price_eur: price, shipping: { fee_eur: fee } });
 const one = bundleBasket([item(7.66, 0)], {});
