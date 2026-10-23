@@ -13,3 +13,10 @@ SHIP_TO = "DZ"     # ship-to country code
 #   AE_TRACKING_ID  – affiliate tracking id (optional, for affiliate links)
 #   ACCESS_TOKEN    – long random string; becomes part of the connector URL
 #   AE_COOKIES      – (experimental) logged-in AliExpress cookie header, for personalised prices
+
+[[kv_namespaces]]
+binding = "SHOPSCOUT_KV"   # refreshed session cookies, 15-min price cache, session status
+id = "3ca7b8f9f09c4d7d8ec70d092f6b18a8"
+
+[triggers]
+crons = ["17 6 * * *"]     # daily session keep-alive (06:17 UTC)

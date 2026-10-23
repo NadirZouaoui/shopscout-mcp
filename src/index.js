@@ -2,8 +2,9 @@
 // Endpoint: POST https://<worker>/mcp/<ACCESS_TOKEN>
 
 import { TOOLS } from "./tools.js";
+import { keepAlive } from "./pdp.js";
 
-const SERVER_INFO = { name: "shopscout-mcp", version: "0.3.0" };
+const SERVER_INFO = { name: "shopscout-mcp", version: "0.4.0" };
 const DEFAULT_PROTOCOL = "2025-06-18";
 
 const json = (body, status = 200) =>
@@ -28,7 +29,8 @@ async function handleMessage(msg, env) {
         instructions:
           "AliExpress product search, details and reviews. search_products reads the real site results by default (same items, prices, deal badges and shipping text the site shows); source 'api' uses the affiliate catalog, which misses many deal items. " +
           "Results are compact text; call get_product for one item's details. Prices are in the configured currency and ship-to country. " +
-          "Use the shipping field when present. Otherwise prices exclude shipping: before recommending, check the shipping fee for each shortlisted item " +
+          "Use the shipping field when present. For shortlisted items (at most 5) call check_price: it returns the owner's own price, shipping, total and deals. " +
+          "Only if check_price reports an expired session, check the shipping fee for each shortlisted item " +
           "(at most ~5) with the browser extension if available: open the item page, read the page text (avoid screenshots), " +
           "and report item price + shipping = total. If no browser is available, say clearly that prices exclude shipping.",
       });
@@ -55,6 +57,11 @@ async function handleMessage(msg, env) {
 }
 
 export default {
+  // Daily cron (wrangler.toml [triggers]): keeps the session warm and records its status in KV.
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(keepAlive(env));
+  },
+
   async fetch(request, env) {
     const url = new URL(request.url);
 

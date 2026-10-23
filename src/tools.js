@@ -1,4 +1,15 @@
 import { sessionProbe } from "./session.js";
+import { checkPrice, SessionError } from "./pdp.js";
+
+// Public price (no shipping) when the session can't be used.
+async function publicFallback(id, env) {
+  try {
+    const p = await scrapeProduct(id, env);
+    return { ...p, url: `https://www.aliexpress.com/item/${id}.html`, source: "public", shipping: "unknown (session expired)" };
+  } catch (e) {
+    return { id, error: `session expired and public page unreadable: ${e.message}` };
+  }
+}
 import { callApi, compactProduct, withAffiliateLink, asArray } from "./aliexpress.js";
 import { scrapeSearch, scrapeProduct, scrapeReviews } from "./scrape.js";
 
@@ -194,6 +205,42 @@ export const TOOLS = [
           ? missing.map((id) => `${id}: not in the affiliate catalog and the item page couldn't be read`)
           : undefined,
         unresolved,
+      };
+    },
+  },
+  {
+    name: "check_price",
+    description:
+      "Personalised price check for shortlisted items (1-5): the owner's own price, shipping fee to the configured country, " +
+      "total in EUR and DZD, delivery estimate, stock, variant prices and deal texts (bundle / multi-piece discounts, coupons). " +
+      "Uses the owner's logged-in session; results are cached 15 minutes unless fresh=true. Use this instead of the browser " +
+      "to get shipping for shortlisted items. If the session has expired it says so and returns the public price instead.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        products: { type: "string", description: "Product ids or URLs, comma-separated (max 5)" },
+        fresh: { type: "boolean", description: "Skip the 15-minute cache" },
+      },
+      required: ["products"],
+    },
+    async run(args, env) {
+      const { ids, failed } = await toIds(args.products);
+      const results = [];
+      let expired = null;
+      for (const id of ids.slice(0, 5)) { // sequential: avoids bursts at the same instant
+        if (expired) { results.push(await publicFallback(id, env)); continue; }
+        try {
+          results.push(await checkPrice(id, env, { fresh: !!args.fresh }));
+        } catch (e) {
+          if (e instanceof SessionError) { expired = e.message; results.push(await publicFallback(id, env)); }
+          else results.push({ id, error: String(e.message || e) });
+        }
+      }
+      return {
+        session: expired ? `expired: ${expired} Prices below are public prices without shipping; refresh AE_COOKIES.` : "ok",
+        items: results,
+        unresolved: failed.length ? failed : undefined,
+        skipped: ids.length > 5 ? ids.slice(5) : undefined,
       };
     },
   },
