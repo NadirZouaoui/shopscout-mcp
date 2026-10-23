@@ -204,12 +204,18 @@ export const TOOLS = [
       "and report whether personalised price, shipping and login markers are present. Use only when asked to test the session.",
     inputSchema: {
       type: "object",
-      properties: { product: { type: "string", description: "Product id or URL" } },
+      properties: {
+        product: { type: "string", description: "Product id or URL" },
+        expect: {
+          type: "array", items: { type: "string" },
+          description: "Optional values to locate in the responses, e.g. the price and shipping the app shows (\"81.83\", \"5.95\")",
+        },
+      },
       required: ["product"],
     },
     async run(args, env) {
       const { ids: [id] } = await toIds(args.product);
-      return sessionProbe(id, env);
+      return sessionProbe(id, env, Array.isArray(args.expect) ? args.expect.map(String) : []);
     },
   },
   {
