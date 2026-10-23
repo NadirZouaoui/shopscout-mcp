@@ -12,3 +12,4 @@ SHIP_TO = "DZ"     # ship-to country code
 #   AE_APP_SECRET   – App Secret
 #   AE_TRACKING_ID  – affiliate tracking id (optional, for affiliate links)
 #   ACCESS_TOKEN    – long random string; becomes part of the connector URL
+#   AE_COOKIES      – (experimental) logged-in AliExpress cookie header, for personalised prices

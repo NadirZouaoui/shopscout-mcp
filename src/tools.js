@@ -1,3 +1,4 @@
+import { sessionProbe } from "./session.js";
 import { callApi, compactProduct, withAffiliateLink, asArray } from "./aliexpress.js";
 import { scrapeSearch, scrapeProduct, scrapeReviews } from "./scrape.js";
 
@@ -194,6 +195,21 @@ export const TOOLS = [
           : undefined,
         unresolved,
       };
+    },
+  },
+  {
+    name: "session_probe",
+    description:
+      "Experimental diagnostics: fetch one product's page and price request using the owner's logged-in session, " +
+      "and report whether personalised price, shipping and login markers are present. Use only when asked to test the session.",
+    inputSchema: {
+      type: "object",
+      properties: { product: { type: "string", description: "Product id or URL" } },
+      required: ["product"],
+    },
+    async run(args, env) {
+      const { ids: [id] } = await toIds(args.product);
+      return sessionProbe(id, env);
     },
   },
   {
