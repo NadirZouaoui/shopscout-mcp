@@ -33,7 +33,7 @@ ok("initialize", s === 200 && r.result.serverInfo.name === "shopscout-mcp");
 [s] = await call({ jsonrpc: "2.0", method: "notifications/initialized" });
 ok("notification -> 202", s === 202);
 [s, r] = await call({ jsonrpc: "2.0", id: 2, method: "tools/list" });
-ok("tools/list", r.result.tools.length === 7);
+ok("tools/list", r.result.tools.length === 8);
 [s, r] = await call({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "search_products", arguments: { keywords: "wifi", source: "api" } } });
 ok("search_products (api)", JSON.parse(r.result.content[0].text).products[0].price === "12.5 USD");
 [s, r] = await call({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "get_product", arguments: { products: "https://www.aliexpress.com/item/1005001234567890.html" } } });

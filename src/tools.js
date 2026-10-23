@@ -1,5 +1,6 @@
 import { sessionProbe } from "./session.js";
 import { checkPrice, SessionError, bundleBasket } from "./pdp.js";
+import { getCart } from "./cart.js";
 
 // Public price (no shipping) when the session can't be used.
 async function publicFallback(id, env) {
@@ -206,6 +207,22 @@ export const TOOLS = [
           : undefined,
         unresolved,
       };
+    },
+  },
+  {
+    name: "get_cart",
+    description:
+      "Read the owner's AliExpress cart (read-only: never adds, removes or changes anything). Returns each item's id, plain link, " +
+      "title, variant, store, quantity, price, original price, shipping fee, line total, delivery days and whether it's selected, " +
+      "plus AliExpress's own summary (items total, discounts, estimated total) in EUR and DZD.",
+    inputSchema: { type: "object", properties: {} },
+    async run(_args, env) {
+      try {
+        return await getCart(env);
+      } catch (e) {
+        if (e instanceof SessionError) return { session: `expired: ${e.message} Refresh AE_COOKIES.` };
+        throw e;
+      }
     },
   },
   {

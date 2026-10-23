@@ -52,28 +52,21 @@ async function saveCookies(env, cookies) {
 
 export class SessionError extends Error {}
 
-async function mtopCall(id, env, cookies, sourceType = "") {
+// One signed mtop GET (same signing the AliExpress web pages use).
+async function mtopCall(api, dataObj, cookies, referer) {
   const tk = cookieValue(cookies, "_m_h5_tk");
   const token = tk ? tk.split("_")[0] : "";
-  const country = env.SHIP_TO || "DZ";
   const t = String(Date.now());
-  const randomToken = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
-  const data = JSON.stringify({
-    _currency: env.CURRENCY || "EUR", _lang: `en_${country}`, channel: "", city: "null", clientType: "pc",
-    country,
-    ext: JSON.stringify({ foreverRandomToken: randomToken, site: "ara", crawler: false, "x-m-biz-bx-region": "", signedIn: true, host: HOST }),
-    pdpNPI: "", pdp_ext_f: "", productId: id, province: "null", sourceType,
-  });
-  const url = new URL("https://acs.aliexpress.com/h5/mtop.aliexpress.pdp.pc.query/1.0/");
+  const data = JSON.stringify(dataObj);
+  const url = new URL(`https://acs.aliexpress.com/h5/${api}/1.0/`);
   url.search = new URLSearchParams({
     jsv: "2.5.1", appKey: MTOP_APP_KEY, t, sign: await md5(`${token}&${t}&${MTOP_APP_KEY}&${data}`),
-    api: "mtop.aliexpress.pdp.pc.query", type: "originaljsonp", v: "1.0", timeout: "15000",
-    dataType: "originaljsonp", callback: "mtopjsonp1", data,
+    api, type: "originaljsonp", v: "1.0", timeout: "15000", dataType: "originaljsonp", callback: "mtopjsonp1", data,
   }).toString();
   const r = await fetch(url, {
     headers: {
       "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9", Accept: "*/*", Cookie: cookies,
-      Referer: `https://${HOST}/`, "Sec-Fetch-Dest": "script", "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Site": "same-site",
+      Referer: referer, "Sec-Fetch-Dest": "script", "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Site": "same-site",
     },
   });
   const body = await r.text();
@@ -82,24 +75,36 @@ async function mtopCall(id, env, cookies, sourceType = "") {
   return { status: r.status, parsed, ret: (parsed?.ret || []).join(" | ") || body.slice(0, 120), setCookies: setCookieList(r.headers) };
 }
 
-// Fetch the raw pdp result, refreshing the mtop token once if it has expired.
-// sourceType "570" = Bundle deals channel: the item page then returns the bundle price.
-export const BUNDLE_SOURCE = "570";
-export async function fetchPdp(id, env, sourceType = "") {
+// Session-aware mtop request: KV/secret cookies, token refresh + one retry, expiry detection.
+export async function mtopRequest(env, api, dataObj, referer) {
   let cookies = await loadCookies(env);
   if (!cookies) throw new SessionError("No session cookies set (AE_COOKIES).");
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await mtopCall(id, env, cookies, sourceType);
+    const res = await mtopCall(api, dataObj, cookies, referer);
     const merged = mergeCookies(cookies, res.setCookies);
     if (merged.changed) { cookies = merged.cookies; await saveCookies(env, cookies); }
     if (/FAIL_SYS_TOKEN/i.test(res.ret) && attempt === 0) continue; // token refreshed via Set-Cookie: retry
     if (/SESSION_EXPIRED|FAIL_SYS_SESSION|NOT_LOGIN|LOGIN/i.test(res.ret)) throw new SessionError(`Session expired (${res.ret}).`);
-    if (!/^SUCCESS/.test(res.ret)) throw new Error(`Price request failed: ${res.ret}`);
-    const result = res.parsed?.data?.result;
-    if (!result?.PRICE) throw new SessionError("Price data missing from response (session may have expired).");
-    return result;
+    if (!/^SUCCESS/.test(res.ret)) throw new Error(`Request failed: ${res.ret}`);
+    return res.parsed?.data;
   }
   throw new SessionError("Token refresh failed.");
+}
+
+// sourceType "570" = Bundle deals channel: the item page then returns the bundle price.
+export const BUNDLE_SOURCE = "570";
+export async function fetchPdp(id, env, sourceType = "") {
+  const country = env.SHIP_TO || "DZ";
+  const randomToken = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const data = await mtopRequest(env, "mtop.aliexpress.pdp.pc.query", {
+    _currency: env.CURRENCY || "EUR", _lang: `en_${country}`, channel: "", city: "null", clientType: "pc",
+    country,
+    ext: JSON.stringify({ foreverRandomToken: randomToken, site: "ara", crawler: false, "x-m-biz-bx-region": "", signedIn: true, host: HOST }),
+    pdpNPI: "", pdp_ext_f: "", productId: id, province: "null", sourceType,
+  }, `https://${HOST}/`);
+  const result = data?.result;
+  if (!result?.PRICE) throw new SessionError("Price data missing from response (session may have expired).");
+  return result;
 }
 
 // First object (depth-first) that has the given key.
