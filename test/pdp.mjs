@@ -40,7 +40,7 @@ const result = {
   },
   QUANTITY_PC: { totalAvailableInventory: 67 },
   PRICE_EXTEND: { priceExtendViews: [{ text: "2+ pieces, extra 2% off" }], buildText: "<span>Tax excluded</span>" },
-  INTEREST_POINTS: { content: "€0.91 off over €90.41", couponIcon: "https://ae-pic.example/x.png", couponStartColor: "#FF0000" },
+  INTEREST_POINTS: { content: "€0.91 off over €90.41", atm: "real_super_deals_atm", head: "Discounts & coupon codes", couponIcon: "https://ae-pic.example/x.png", couponStartColor: "#FF0000" },
 };
 
 const p = parsePdp(result, "1005009412750740");
@@ -52,6 +52,8 @@ ok("deals (bundle + coupon, no urls/colors)", p.deals.includes("2+ pieces, extra
 ok("plain url", p.url === "https://www.aliexpress.com/item/1005009412750740.html");
 
 const free = parsePdp({ ...result, SHIPPING: { x: { displayAmount: 0, shippingFee: "free" } } }, "1");
+const freeText = parsePdp({ ...result, SHIPPING: { title: "Shipping", deliveryLayoutInfo: [{ content: "<strong>Free shipping</strong>" }] } }, "1");
+ok("free shipping from text", freeText.shipping?.fee_eur === 0 && freeText.total_eur === 81.83);
 ok("free shipping", free.shipping.fee_eur === 0 && free.total_eur === 81.83);
 
 const m = mergeCookies("a=1; _m_h5_tk=old_1", ["_m_h5_tk=new_2; Path=/; Domain=.aliexpress.com", "b=3; Path=/"]);
@@ -80,6 +82,8 @@ const b = await checkPrice("1005009412750740", env, { bundle: true });
 ok("bundle sourceType + separate cache", /"sourceType":"570"/.test(sent) && b.channel === "bundle" && !b.cached);
 
 const item = (price, fee) => ({ price_eur: price, shipping: { fee_eur: fee } });
+const one = bundleBasket([item(7.66, 0)], {});
+ok("basket <3 with unknown fee: no fake total", one.total_eur === undefined && one.total_before_shipping_eur === 7.66 && /checkout/.test(one.shipping));
 const two = bundleBasket([item(7.66, 1.5), item(8.21, 1.2)], {});
 ok("basket <3: shipping charged", two.items === 2 && two.total_eur === 18.57 && /add 1 more/.test(two.next_step));
 const six = bundleBasket([item(7.66, 1), item(8.21, 1), { ...item(5, 1), quantity: 4 }], { USD_PER_EUR: "1.08" });

@@ -131,7 +131,8 @@ function dealTexts(result) {
     if (typeof v === "string") {
       const s = v.replace(/<[^>]+>/g, "").trim();
       // keep short sentences that mention money, percent, pieces or bundles; skip urls, colors, codes, json
-      if (s.length >= 6 && s.length <= 120 && !/^(https?:|\/\/|#|\{|\[)/.test(s) && /[€%]|\d+\+|piece|bundle|off|coupon|deal|save/i.test(s))
+      if (s.length >= 6 && s.length <= 120 && /\s/.test(s) && !/^(https?:|\/\/|#|\{|\[)/.test(s) &&
+          /[€%$]|\d+\+|piece|bundle|off\b|save/i.test(s) && !/^discounts? & coupon/i.test(s))
         out.add(s);
       return;
     }
@@ -149,9 +150,11 @@ export function parsePdp(result, id) {
 
   // Shipping for the selected variant
   const ship = findWithKey(result.SHIPPING, "displayAmount") || findWithKey(result.SHIPPING, "formattedAmount") || {};
-  const free = /free/i.test(String(ship.shippingFee || "")) || ship.displayAmount === 0;
+  const shipText = JSON.stringify(result.SHIPPING || {});
+  const free = /free/i.test(String(ship.shippingFee || "")) || ship.displayAmount === 0 ||
+    (ship.displayAmount === undefined && !ship.formattedAmount && /free shipping/i.test(shipText));
   const shippingEur = free ? 0 : (typeof ship.displayAmount === "number" ? ship.displayAmount : eur(ship.formattedAmount));
-  const shipping = ship.displayAmount !== undefined || ship.formattedAmount
+  const shipping = ship.displayAmount !== undefined || ship.formattedAmount || free
     ? {
         fee_eur: shippingEur,
         carrier: ship.deliveryProviderName || ship.company,
@@ -226,6 +229,8 @@ export function bundleBasket(items, env) {
   const tier = BUNDLE_TIERS.find((t) => count >= t.items);
   const discountEur = tier ? round2(tier.off_usd / usdPerEur) : 0;
   const freeShipping = count >= 3;
+  // Below 3 items the bundle channel charges shipping at checkout; per-item fees are only a guide.
+  const known = priced.every((i) => typeof i.shipping?.fee_eur === "number" && i.shipping.fee_eur > 0);
   const shippingEur = freeShipping ? 0 : round2(priced.reduce((s, i) => s + (i.shipping?.fee_eur || 0), 0));
   const total = round2(subtotal - discountEur + shippingEur);
   const next = [...BUNDLE_TIERS].reverse().find((t) => count < t.items);
@@ -233,9 +238,12 @@ export function bundleBasket(items, env) {
     items: count,
     subtotal_eur: subtotal,
     discount: tier ? `US $${tier.off_usd} off (≈ €${discountEur.toFixed(2)})` : "none",
-    shipping: freeShipping ? "free (3+ items)" : `€${shippingEur.toFixed(2)} (add ${3 - count} more for free shipping)`,
-    total_eur: total,
-    total_dzd: Math.round(total * DZD_PER_EUR),
+    shipping: freeShipping ? "free (3+ items)"
+      : known ? `€${shippingEur.toFixed(2)} (add ${3 - count} more for free shipping)`
+      : `charged at checkout below 3 items (amount not shown); add ${3 - count} more for free shipping`,
+    total_eur: freeShipping || known ? total : undefined,
+    total_before_shipping_eur: freeShipping || known ? undefined : round2(subtotal - discountEur),
+    total_dzd: Math.round((freeShipping || known ? total : subtotal - discountEur) * DZD_PER_EUR),
     next_step: count < 3 ? `add ${3 - count} more item(s) for free shipping`
       : next ? `add ${next.items - count} more for US $${next.off_usd} off` : undefined,
     note: "Tier discounts are in US$, converted at the USD_PER_EUR setting; AliExpress applies the exact amount at checkout.",
