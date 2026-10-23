@@ -1,6 +1,6 @@
 // Offline test for check_price parsing, token refresh and KV caching (mocked mtop responses).
 import { createHash } from "node:crypto";
-import { parsePdp, mergeCookies, checkPrice } from "../src/pdp.js";
+import { parsePdp, mergeCookies, checkPrice, bundleBasket } from "../src/pdp.js";
 
 // Workers' crypto.subtle supports MD5; Node's doesn't, so shim it for the test.
 const digest = crypto.subtle.digest.bind(crypto.subtle);
@@ -72,5 +72,17 @@ const first = await checkPrice("1005009412750740", env);
 ok("token refresh retry", calls === 2 && first.total_eur === 87.78 && store.get("cookies").includes("_m_h5_tk=fresh_9"));
 const second = await checkPrice("1005009412750740", env);
 ok("kv cache", second.cached === true && calls === 2);
+
+// Bundle channel: sourceType 570 is sent, cached separately
+let sent = "";
+globalThis.fetch = async (u) => { sent = decodeURIComponent(String(u)); return new Response(`mtopjsonp1(${JSON.stringify({ ret: ["SUCCESS::ok"], data: { result } })})`); };
+const b = await checkPrice("1005009412750740", env, { bundle: true });
+ok("bundle sourceType + separate cache", /"sourceType":"570"/.test(sent) && b.channel === "bundle" && !b.cached);
+
+const item = (price, fee) => ({ price_eur: price, shipping: { fee_eur: fee } });
+const two = bundleBasket([item(7.66, 1.5), item(8.21, 1.2)], {});
+ok("basket <3: shipping charged", two.items === 2 && two.total_eur === 18.57 && /add 1 more/.test(two.next_step));
+const six = bundleBasket([item(7.66, 1), item(8.21, 1), { ...item(5, 1), quantity: 4 }], { USD_PER_EUR: "1.08" });
+ok("basket 6: free shipping + US$3 tier", six.items === 6 && six.subtotal_eur === 35.87 && six.total_eur === 33.09 && /US \$4/.test(six.next_step));
 
 if (checks.includes(false)) process.exit(1);

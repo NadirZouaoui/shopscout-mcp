@@ -6,6 +6,7 @@ compatibility_date = "2026-01-01"
 CURRENCY = "EUR"   # target currency for prices
 LANGUAGE = "EN"
 SHIP_TO = "DZ"     # ship-to country code
+USD_PER_EUR = "1.08"  # converts Bundle deals US$ tier discounts to EUR (approximate)
 
 # Secrets (set with `npx wrangler secret put NAME`, never commit them):
 #   AE_APP_KEY      – App Key from the Open Platform console

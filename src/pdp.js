@@ -52,7 +52,7 @@ async function saveCookies(env, cookies) {
 
 export class SessionError extends Error {}
 
-async function mtopCall(id, env, cookies) {
+async function mtopCall(id, env, cookies, sourceType = "") {
   const tk = cookieValue(cookies, "_m_h5_tk");
   const token = tk ? tk.split("_")[0] : "";
   const country = env.SHIP_TO || "DZ";
@@ -62,7 +62,7 @@ async function mtopCall(id, env, cookies) {
     _currency: env.CURRENCY || "EUR", _lang: `en_${country}`, channel: "", city: "null", clientType: "pc",
     country,
     ext: JSON.stringify({ foreverRandomToken: randomToken, site: "ara", crawler: false, "x-m-biz-bx-region": "", signedIn: true, host: HOST }),
-    pdpNPI: "", pdp_ext_f: "", productId: id, province: "null", sourceType: "",
+    pdpNPI: "", pdp_ext_f: "", productId: id, province: "null", sourceType,
   });
   const url = new URL("https://acs.aliexpress.com/h5/mtop.aliexpress.pdp.pc.query/1.0/");
   url.search = new URLSearchParams({
@@ -83,11 +83,13 @@ async function mtopCall(id, env, cookies) {
 }
 
 // Fetch the raw pdp result, refreshing the mtop token once if it has expired.
-export async function fetchPdp(id, env) {
+// sourceType "570" = Bundle deals channel: the item page then returns the bundle price.
+export const BUNDLE_SOURCE = "570";
+export async function fetchPdp(id, env, sourceType = "") {
   let cookies = await loadCookies(env);
   if (!cookies) throw new SessionError("No session cookies set (AE_COOKIES).");
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await mtopCall(id, env, cookies);
+    const res = await mtopCall(id, env, cookies, sourceType);
     const merged = mergeCookies(cookies, res.setCookies);
     if (merged.changed) { cookies = merged.cookies; await saveCookies(env, cookies); }
     if (/FAIL_SYS_TOKEN/i.test(res.ret) && attempt === 0) continue; // token refreshed via Set-Cookie: retry
@@ -190,13 +192,13 @@ export function parsePdp(result, id) {
 }
 
 // One item: cached in KV for CACHE_TTL seconds unless fresh is requested.
-export async function checkPrice(id, env, { fresh = false } = {}) {
-  const key = `pdp:${id}`;
+export async function checkPrice(id, env, { fresh = false, bundle = false } = {}) {
+  const key = `pdp:${bundle ? "b:" : ""}${id}`;
   if (!fresh && env.SHOPSCOUT_KV) {
     const hit = await env.SHOPSCOUT_KV.get(key, "json");
     if (hit) return { ...hit, cached: true };
   }
-  const out = { ...parsePdp(await fetchPdp(id, env), id), checked_at: new Date().toISOString() };
+  const out = { ...parsePdp(await fetchPdp(id, env, bundle ? BUNDLE_SOURCE : ""), id), ...(bundle ? { channel: "bundle" } : {}), checked_at: new Date().toISOString() };
   if (env.SHOPSCOUT_KV) await env.SHOPSCOUT_KV.put(key, JSON.stringify(out), { expirationTtl: CACHE_TTL });
   return out;
 }
@@ -212,4 +214,30 @@ export async function keepAlive(env) {
   }
   if (env.SHOPSCOUT_KV) await env.SHOPSCOUT_KV.put("session_status", JSON.stringify(status));
   return status;
+}
+
+// Bundle deals basket: free shipping from 3 items; tiered US$ discounts (as shown on the Bundle deals page).
+export const BUNDLE_TIERS = [{ items: 12, off_usd: 6 }, { items: 8, off_usd: 4 }, { items: 6, off_usd: 3 }];
+export function bundleBasket(items, env) {
+  const priced = items.filter((i) => typeof i.price_eur === "number");
+  const count = priced.reduce((n, i) => n + (i.quantity || 1), 0);
+  const subtotal = round2(priced.reduce((s, i) => s + i.price_eur * (i.quantity || 1), 0));
+  const usdPerEur = Number(env.USD_PER_EUR) || 1.08;
+  const tier = BUNDLE_TIERS.find((t) => count >= t.items);
+  const discountEur = tier ? round2(tier.off_usd / usdPerEur) : 0;
+  const freeShipping = count >= 3;
+  const shippingEur = freeShipping ? 0 : round2(priced.reduce((s, i) => s + (i.shipping?.fee_eur || 0), 0));
+  const total = round2(subtotal - discountEur + shippingEur);
+  const next = [...BUNDLE_TIERS].reverse().find((t) => count < t.items);
+  return {
+    items: count,
+    subtotal_eur: subtotal,
+    discount: tier ? `US $${tier.off_usd} off (≈ €${discountEur.toFixed(2)})` : "none",
+    shipping: freeShipping ? "free (3+ items)" : `€${shippingEur.toFixed(2)} (add ${3 - count} more for free shipping)`,
+    total_eur: total,
+    total_dzd: Math.round(total * DZD_PER_EUR),
+    next_step: count < 3 ? `add ${3 - count} more item(s) for free shipping`
+      : next ? `add ${next.items - count} more for US $${next.off_usd} off` : undefined,
+    note: "Tier discounts are in US$, converted at the USD_PER_EUR setting; AliExpress applies the exact amount at checkout.",
+  };
 }

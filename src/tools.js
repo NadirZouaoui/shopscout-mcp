@@ -1,5 +1,5 @@
 import { sessionProbe } from "./session.js";
-import { checkPrice, SessionError } from "./pdp.js";
+import { checkPrice, SessionError, bundleBasket } from "./pdp.js";
 
 // Public price (no shipping) when the session can't be used.
 async function publicFallback(id, env) {
@@ -214,12 +214,15 @@ export const TOOLS = [
       "Personalised price check for shortlisted items (1-5): the owner's own price, shipping fee to the configured country, " +
       "total in EUR and DZD, delivery estimate, stock, variant prices and deal texts (bundle / multi-piece discounts, coupons). " +
       "Uses the owner's logged-in session; results are cached 15 minutes unless fresh=true. Use this instead of the browser " +
-      "to get shipping for shortlisted items. If the session has expired it says so and returns the public price instead.",
+      "to get shipping for shortlisted items. If the session has expired it says so and returns the public price instead. " +
+      "bundle=true gives the Bundle deals price (often lower) and a basket total: free shipping from 3 items, US$3/4/6 off at 6/8/12 items.",
     inputSchema: {
       type: "object",
       properties: {
         products: { type: "string", description: "Product ids or URLs, comma-separated (max 5)" },
         fresh: { type: "boolean", description: "Skip the 15-minute cache" },
+        bundle: { type: "boolean", description: "Use Bundle deals prices and add a basket total" },
+        quantities: { type: "object", description: "Optional pieces per product id for the basket, e.g. {\"1005007345426036\": 2}" },
       },
       required: ["products"],
     },
@@ -230,13 +233,18 @@ export const TOOLS = [
       for (const id of ids.slice(0, 5)) { // sequential: avoids bursts at the same instant
         if (expired) { results.push(await publicFallback(id, env)); continue; }
         try {
-          results.push(await checkPrice(id, env, { fresh: !!args.fresh }));
+          results.push(await checkPrice(id, env, { fresh: !!args.fresh, bundle: !!args.bundle }));
         } catch (e) {
           if (e instanceof SessionError) { expired = e.message; results.push(await publicFallback(id, env)); }
           else results.push({ id, error: String(e.message || e) });
         }
       }
+      const qty = args.quantities && typeof args.quantities === "object" ? args.quantities : {};
+      const basket = args.bundle && !expired
+        ? bundleBasket(results.filter((r) => !r.error).map((r) => ({ ...r, quantity: Math.max(1, Number(qty[r.id]) || 1) })), env)
+        : undefined;
       return {
+        basket,
         session: expired ? `expired: ${expired} Prices below are public prices without shipping; refresh AE_COOKIES.` : "ok",
         items: results,
         unresolved: failed.length ? failed : undefined,
