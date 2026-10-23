@@ -107,10 +107,16 @@ export async function sessionProbe(id, env, expect = []) {
   } else {
     const token = tk.split("_")[0];
     const t = String(Date.now());
+    // Mirrors the request the logged-in DZ page makes (captured from the browser): regional site "ara",
+    // host ar.aliexpress.com, locale en_<country>, "null" city/province, random 32-hex token.
+    const country = env.SHIP_TO || "DZ";
+    const host = "ar.aliexpress.com";
+    const randomToken = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
     const data = JSON.stringify({
-      productId: id, _lang: "en_US", _currency: env.CURRENCY || "EUR", country: env.SHIP_TO || "DZ",
-      province: "", city: "", channel: "", pdp_ext_f: "", pdpNPI: "", sourceType: "", clientType: "pc",
-      ext: JSON.stringify({ foreverRandomToken: "", site: "glo", crawler: false, "x-m-biz-bx-region": "", signedIn: true, host: "www.aliexpress.com" }),
+      _currency: env.CURRENCY || "EUR", _lang: `en_${country}`, channel: "", city: "null", clientType: "pc",
+      country,
+      ext: JSON.stringify({ foreverRandomToken: randomToken, site: "ara", crawler: false, "x-m-biz-bx-region": "", signedIn: true, host }),
+      pdpNPI: "", pdp_ext_f: "", productId: id, province: "null", sourceType: "",
     });
     const sign = await md5(`${token}&${t}&${MTOP_APP_KEY}&${data}`);
     const url = new URL("https://acs.aliexpress.com/h5/mtop.aliexpress.pdp.pc.query/1.0/");
@@ -118,7 +124,9 @@ export async function sessionProbe(id, env, expect = []) {
       jsv: "2.5.1", appKey: MTOP_APP_KEY, t, sign, api: "mtop.aliexpress.pdp.pc.query", type: "originaljsonp",
       v: "1.0", timeout: "15000", dataType: "originaljsonp", callback: "mtopjsonp1", data,
     }).toString();
-    const r = await fetch(url, { headers: { ...headers, Referer: `https://www.aliexpress.com/item/${id}.html` } });
+    const r = await fetch(url, {
+      headers: { ...headers, Accept: "*/*", Referer: `https://${host}/`, "Sec-Fetch-Dest": "script", "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Site": "same-site" },
+    });
     const body = await r.text();
     let parsed;
     try {
@@ -127,7 +135,7 @@ export async function sessionProbe(id, env, expect = []) {
     report.mtop = {
       status: r.status, length: body.length,
       ret: body.match(/"ret":\[[^\]]*\]/)?.[0],
-      structure: parsed ? describe(parsed.data, 3) : "unparsed",
+      structure: parsed ? describe(parsed.data?.result ?? parsed.data, 2) : "unparsed",
       hits: findValues(body, expect),
       keyword_hits: keywordSnippets(body, ["price", "freight", "shipping", "delivery", "login", "amount"]),
       price: snippets(body, PRICE_KEYS),
