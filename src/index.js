@@ -27,7 +27,10 @@ async function handleMessage(msg, env) {
         serverInfo: SERVER_INFO,
         instructions:
           "Product search and details for an online marketplace via its official affiliate API. " +
-          "Results are compact text; call get_product for one item's details. Prices are in the configured currency and ship-to country.",
+          "Results are compact text; call get_product for one item's details. Prices are in the configured currency and ship-to country. " +
+          "Prices do NOT include shipping yet. Before recommending, check the shipping fee for each shortlisted item " +
+          "(at most ~5) with the browser extension if available: open the item page, read the page text (avoid screenshots), " +
+          "and report item price + shipping = total. If no browser is available, say clearly that prices exclude shipping.",
       });
     case "ping":
       return rpcResult(id, {});
