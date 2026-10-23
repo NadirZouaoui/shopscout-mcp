@@ -15,7 +15,7 @@ async function md5(text) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-const cookieValue = (cookies, name) => cookies.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`))?.[1];
+export const cookieValue = (cookies, name) => cookies.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`))?.[1];
 
 // Merge Set-Cookie values into a Cookie header string (replace same-name cookies, append new ones).
 export function mergeCookies(cookies, setCookies) {
@@ -35,40 +35,54 @@ export function mergeCookies(cookies, setCookies) {
   return { cookies: [...jar].map(([k, v]) => `${k}=${v}`).join("; "), changed };
 }
 
-function setCookieList(headers) {
+export function setCookieList(headers) {
   if (typeof headers.getSetCookie === "function") return headers.getSetCookie();
   const raw = headers.get("set-cookie");
   return raw ? raw.split(/,(?=\s*[\w-]+=)/) : [];
 }
 
-async function loadCookies(env) {
+export async function loadCookies(env) {
   const kv = env.SHOPSCOUT_KV ? await env.SHOPSCOUT_KV.get("cookies") : null;
   return (kv || env.AE_COOKIES || "").trim();
 }
 
-async function saveCookies(env, cookies) {
+export async function saveCookies(env, cookies) {
   if (env.SHOPSCOUT_KV) await env.SHOPSCOUT_KV.put("cookies", cookies);
 }
 
 export class SessionError extends Error {}
 
 // One signed mtop GET (same signing the AliExpress web pages use).
-async function mtopCall(api, dataObj, cookies, referer) {
+async function mtopCall(api, dataObj, cookies, referer, opts = {}) {
   const tk = cookieValue(cookies, "_m_h5_tk");
   const token = tk ? tk.split("_")[0] : "";
   const t = String(Date.now());
   const data = JSON.stringify(dataObj);
+  const appKey = opts.appKey || MTOP_APP_KEY;
+  const post = opts.method === "POST";
   const url = new URL(`https://acs.aliexpress.com/h5/${api}/1.0/`);
-  url.search = new URLSearchParams({
-    jsv: "2.5.1", appKey: MTOP_APP_KEY, t, sign: await md5(`${token}&${t}&${MTOP_APP_KEY}&${data}`),
-    api, type: "originaljsonp", v: "1.0", timeout: "15000", dataType: "originaljsonp", callback: "mtopjsonp1", data,
-  }).toString();
-  const r = await fetch(url, {
-    headers: {
-      "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9", Accept: "*/*", Cookie: cookies,
-      Referer: referer, "Sec-Fetch-Dest": "script", "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Site": "same-site",
-    },
-  });
+  const sign = await md5(`${token}&${t}&${appKey}&${data}`);
+  url.search = new URLSearchParams(post
+    ? { jsv: "2.7.2", appKey, t, sign, api, v: "1.0", type: "originaljson", dataType: "jsonp" }
+    : { jsv: "2.5.1", appKey, t, sign, api, type: "originaljsonp", v: "1.0", timeout: "15000", dataType: "originaljsonp", callback: "mtopjsonp1", data },
+  ).toString();
+  const origin = new URL(referer).origin;
+  const r = await fetch(url, post
+    ? {
+        method: "POST",
+        body: new URLSearchParams({ data }).toString(),
+        headers: {
+          "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9", Accept: "application/json", Cookie: cookies,
+          "Content-Type": "application/x-www-form-urlencoded", Origin: origin, Referer: referer,
+          "Sec-Fetch-Dest": "empty", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Site": "same-site",
+        },
+      }
+    : {
+        headers: {
+          "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9", Accept: "*/*", Cookie: cookies,
+          Referer: referer, "Sec-Fetch-Dest": "script", "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Site": "same-site",
+        },
+      });
   const body = await r.text();
   let parsed = null;
   try { parsed = JSON.parse(body.replace(/^[^(]*\(/, "").replace(/\)\s*;?\s*$/, "")); } catch {}
@@ -76,11 +90,11 @@ async function mtopCall(api, dataObj, cookies, referer) {
 }
 
 // Session-aware mtop request: KV/secret cookies, token refresh + one retry, expiry detection.
-export async function mtopRequest(env, api, dataObj, referer) {
+export async function mtopRequest(env, api, dataObj, referer, opts = {}) {
   let cookies = await loadCookies(env);
   if (!cookies) throw new SessionError("No session cookies set (AE_COOKIES).");
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await mtopCall(api, dataObj, cookies, referer);
+    const res = await mtopCall(api, dataObj, cookies, referer, opts);
     const merged = mergeCookies(cookies, res.setCookies);
     if (merged.changed) { cookies = merged.cookies; await saveCookies(env, cookies); }
     if (/FAIL_SYS_TOKEN/i.test(res.ret) && attempt === 0) continue; // token refreshed via Set-Cookie: retry

@@ -1,6 +1,7 @@
 import { sessionProbe } from "./session.js";
 import { checkPrice, SessionError, bundleBasket } from "./pdp.js";
 import { getCart } from "./cart.js";
+import { bundleDeals } from "./bundle.js";
 
 // Public price (no shipping) when the session can't be used.
 async function publicFallback(id, env) {
@@ -207,6 +208,31 @@ export const TOOLS = [
           : undefined,
         unresolved,
       };
+    },
+  },
+  {
+    name: "bundle_deals",
+    description:
+      "List items in the Bundle deals channel with their bundle prices (often far below the normal price), filtered by keywords " +
+      "(every word must be in the title; use | for alternatives, e.g. 'wifi|wi-fi adapter'). Loads more pages of the channel until " +
+      "'want' matches are found or 'max_pages' is reached (default 6, max 15; about 12 items per page). Uses the owner's session. " +
+      "Then call check_price with bundle=true on chosen ids for shipping and a basket total.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        keywords: { type: "string", description: "Words that must appear in the title; | separates alternatives. Empty = everything." },
+        max_price: { type: "number", description: "Maximum bundle price in EUR" },
+        want: { type: "integer", description: "Stop after this many matches (default 10, max 30)" },
+        max_pages: { type: "integer", description: "Maximum pages to load (default 6, max 15)" },
+      },
+    },
+    async run(args, env) {
+      try {
+        return await bundleDeals(env, args);
+      } catch (e) {
+        if (e instanceof SessionError) return { session: `expired: ${e.message} Refresh AE_COOKIES.` };
+        throw e;
+      }
     },
   },
   {
