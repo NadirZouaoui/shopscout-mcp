@@ -74,11 +74,24 @@ export async function sessionProbe(id, env, expect = []) {
   const headers = { "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9", Cookie: cookies };
   const report = { product: id, cookie_names: cookies.split(/;\s*/).map((c) => c.split("=")[0]).slice(0, 40) };
 
-  // 1) Item page with the session
-  const page = await fetch(`https://www.aliexpress.com/item/${id}.html`, { headers, redirect: "follow" });
+  // 1) Item page with the session — fetched straight from the DZ host with full browser navigation headers
+  const navHeaders = {
+    ...headers,
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Sec-Fetch-Dest": "document", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "none", "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Ch-Ua": '"Chromium";v="130", "Google Chrome";v="130", "Not?A_Brand";v="99"',
+    "Sec-Ch-Ua-Mobile": "?0", "Sec-Ch-Ua-Platform": '"Windows"',
+  };
+  const page = await fetch(`https://ar.aliexpress.com/item/${id}.html`, { headers: navHeaders, redirect: "follow" });
   const html = await page.text();
+  if (!expect.length && id === "1005009412750740") expect = ["81.83", "5.95"]; // default for the reference item until the tool schema refreshes
   report.page = {
     status: page.status, final_url: page.url, length: html.length,
+    title: html.match(/<title>([^<]*)/)?.[1]?.slice(0, 120),
+    euro_amounts: [...new Set(html.match(/€\s?\d+[.,]\d{2}/g) || [])].slice(0, 15),
+    scripts: [...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map((m) => m[1].split("?")[0]).slice(0, 12),
+    init_vars: [...new Set(html.match(/window\.[A-Za-z_]+\s*=/g) || [])].slice(0, 20),
     blocked: /punish|x5secdata|baxia/i.test(html.slice(0, 20000)),
     login: snippets(html, LOGIN_KEYS),
     price: snippets(html, PRICE_KEYS),
