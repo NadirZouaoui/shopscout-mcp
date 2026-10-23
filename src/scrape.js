@@ -81,9 +81,17 @@ const first = (...vals) => vals.find((v) => v !== undefined && v !== null && v !
 const meta = (html, prop) =>
   html.match(new RegExp(`<meta[^>]+(?:property|name)="${prop}"[^>]+content="([^"]*)"`, "i"))?.[1];
 
+// Find every assignment like `window._dida_config_._init_data_= { data: {...} }` and parse it.
+// Matching the assignment (not just the name) matters: the name also appears earlier in unrelated scripts.
 function embeddedData(html) {
-  const markers = ["window._dida_config_._init_data_", "window.runParams", "_d_c_.DCData", "window.__INITIAL_STATE__"];
-  return markers.map((m) => jsonAfter(html, m)).filter(Boolean);
+  const out = [];
+  const re = /(?:_init_data_|window\.runParams|_d_c_\.DCData|window\.__INITIAL_STATE__)\s*=\s*/g;
+  let m;
+  while ((m = re.exec(html)) && out.length < 6) {
+    const parsed = jsonAfter(html.slice(m.index), m[0]);
+    if (parsed) out.push(parsed);
+  }
+  return out;
 }
 
 // ---------- search ----------
@@ -105,7 +113,26 @@ function compactSearchItem(o) {
     rating: first(o.evaluation?.starRating, o.starRating),
     sold: first(o.trade?.tradeDesc, o.trade?.realTradeCount, o.tradeDesc),
     shop: first(o.store?.storeName, o.storeName),
+    ...tagsOf(o),
     link: `https://www.aliexpress.com/item/${id}.html`,
+  };
+}
+
+// Selling-point badges shown on search cards: deal programs (SuperDeals, Choice, Bundle deals),
+// coupons and shipping ("Free shipping", "+€1.99 shipping"). Shipping text is pulled out separately.
+function tagsOf(o) {
+  const texts = [];
+  for (const sp of o.sellingPoints || []) {
+    const t = sp?.tagContent?.tagText || sp?.tagContent?.displayTagText;
+    if (t && !texts.includes(t)) texts.push(String(t).trim());
+  }
+  const shipping = texts.find((t) => /shipping|delivery|livraison/i.test(t));
+  const tags = texts.filter((t) => t !== shipping);
+  const original = o.prices?.originalPrice?.formattedPrice;
+  return {
+    original_price: original,
+    shipping,
+    tags: tags.length ? tags.slice(0, 6) : undefined,
   };
 }
 

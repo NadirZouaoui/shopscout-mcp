@@ -36,7 +36,11 @@ export async function callApi(env, method, apiParams) {
     headers: { "Content-Type": "application/x-www-form-urlencoded;charset=utf-8" },
     body: new URLSearchParams(params).toString(),
   });
-  const data = await res.json();
+  const text = await res.text();
+  let data;
+  try { data = JSON.parse(text); } catch {
+    throw new Error(`AliExpress API gateway returned HTTP ${res.status} (${text.slice(0, 60).trim()}); temporary, retry.`);
+  }
   if (data.error_response) {
     const e = data.error_response;
     throw new Error(`AliExpress API error ${e.code}: ${e.msg || e.sub_msg || "unknown"}`);

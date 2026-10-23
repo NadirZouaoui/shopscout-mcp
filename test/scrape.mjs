@@ -4,8 +4,8 @@ import worker from "../src/index.js";
 
 const env = { ACCESS_TOKEN: "t0k", SHIP_TO: "DZ" };
 
-const searchPage = `<html><script>window._dida_config_._init_data_= { data: {"root":{"fields":{"mods":{"itemList":{"content":[
- {"productId":"1005001111111111","title":{"displayTitle":"WiFi 6 USB adapter"},"prices":{"salePrice":{"formattedPrice":"US $9.80"}},"evaluation":{"starRating":4.7},"trade":{"tradeDesc":"1,000+ sold"},"store":{"storeName":"Net Store"}},
+const searchPage = `<html><script>if(window._dida_config_._init_data_){var x={a:1}}</script><script>window._dida_config_._init_data_= { data: {"root":{"fields":{"mods":{"itemList":{"content":[
+ {"productId":"1005001111111111","title":{"displayTitle":"WiFi 6 USB adapter"},"prices":{"salePrice":{"formattedPrice":"US $9.80"}},"evaluation":{"starRating":4.7},"trade":{"tradeDesc":"1,000+ sold"},"store":{"storeName":"Net Store"},"sellingPoints":[{"tagContent":{"tagText":"SuperDeals"}},{"tagContent":{"tagText":"Free shipping"}}]},
  {"productId":"1005002222222222","title":{"displayTitle":"AC1300 dongle \\"BT\\" {x}"},"prices":{"salePrice":{"formattedPrice":"US $7.10"}}}
 ]}}}}} }</script></html>`;
 
@@ -41,6 +41,7 @@ const ok = (n, c) => { checks.push(c); console.log((c ? "PASS " : "FAIL ") + n);
 
 const s = await call("search_products", { keywords: "wifi 6 adapter" });
 ok("search finds 2", s.products.length === 2 && s.source === "scrape");
+ok("search tags/shipping", s.products[0].shipping === "Free shipping" && s.products[0].tags[0] === "SuperDeals");
 ok("search price/title", s.products[0].price === "US $9.80" && s.products[1].title.includes('"BT"'));
 
 const p = await call("get_product", { products: "https://a.aliexpress.com/_EzTbrRG" });

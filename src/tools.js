@@ -77,30 +77,7 @@ async function toIds(input) {
   return { ids, failed };
 }
 
-export const TOOLS = [
-  {
-    name: "search_products",
-    description:
-      "Search products by keyword. Returns a compact list (id, title, price, rating, orders, shop, link). " +
-      "Use get_product with ids for specs and details.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        keywords: { type: "string", description: "Search terms, e.g. 'wifi 6 usb 3.0 adapter'" },
-        sort: {
-          type: "string",
-          enum: ["SALE_PRICE_ASC", "SALE_PRICE_DESC", "LAST_VOLUME_ASC", "LAST_VOLUME_DESC"],
-          description: "Optional sort order",
-        },
-        min_price: { type: "number" },
-        max_price: { type: "number" },
-        page: { type: "integer", minimum: 1, default: 1 },
-        page_size: { type: "integer", minimum: 1, maximum: 50, default: 10 },
-      },
-      required: ["keywords"],
-    },
-    async run(args, env) {
-      if (mode(env) === "scrape") return scrapeSearch(args, env);
+async function apiSearch(args, env) {
       const d = defaults(env);
       const result = await callApi(env, "aliexpress.affiliate.product.query", {
         keywords: args.keywords,
@@ -120,6 +97,57 @@ export const TOOLS = [
       if (args.sort === "LAST_VOLUME_DESC") products.sort((a, b) => (b.orders_30d || 0) - (a.orders_30d || 0));
       if (args.sort === "LAST_VOLUME_ASC") products.sort((a, b) => (a.orders_30d || 0) - (b.orders_30d || 0));
       return { source: "api", total: result?.total_record_count, page: result?.current_page_no, products };
+}
+
+export const TOOLS = [
+  {
+    name: "search_products",
+    description:
+      "Search products by keyword. Default source 'site' reads the real AliExpress search results (same items and prices " +
+      "the site shows, including SuperDeals/Choice items, deal badges and shipping text when shown). Source 'api' uses the " +
+      "affiliate catalog (only items in the affiliate program; returns 30-day orders). 'both' merges them. " +
+      "Use get_product with ids for details.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        keywords: { type: "string", description: "Search terms, e.g. 'wifi 6 usb 3.0 adapter'" },
+        sort: {
+          type: "string",
+          enum: ["SALE_PRICE_ASC", "SALE_PRICE_DESC", "LAST_VOLUME_ASC", "LAST_VOLUME_DESC"],
+          description: "Optional sort order",
+        },
+        min_price: { type: "number" },
+        max_price: { type: "number" },
+        page: { type: "integer", minimum: 1, default: 1 },
+        page_size: { type: "integer", minimum: 1, maximum: 50, default: 10 },
+        source: { type: "string", enum: ["site", "api", "both"], default: "site" },
+      },
+      required: ["keywords"],
+    },
+    async run(args, env) {
+      const source = mode(env) === "scrape" ? "site" : (args.source || "site");
+      if (source === "site") {
+        try { return await scrapeSearch(args, env); }
+        catch (e) {
+          if (mode(env) === "scrape") throw e;
+          const api = await apiSearch(args, env);
+          return { ...api, note: "Site search failed (" + e.message + "); showing affiliate catalog results instead." };
+        }
+      }
+      if (source === "both") {
+        const [site, api] = await Promise.allSettled([scrapeSearch(args, env), apiSearch(args, env)]);
+        const items = new Map();
+        for (const p of site.value?.products || []) items.set(p.id, { ...p, in: "site" });
+        for (const p of api.value?.products || []) {
+          items.set(p.id, items.has(p.id) ? { ...items.get(p.id), orders_30d: p.orders_30d, in: "both" } : { ...p, in: "api" });
+        }
+        return {
+          source: "both",
+          products: [...items.values()],
+          errors: [site, api].filter((r) => r.status === "rejected").map((r) => String(r.reason?.message || r.reason)),
+        };
+      }
+      return apiSearch(args, env);
     },
   },
   {
@@ -154,11 +182,15 @@ export const TOOLS = [
       const products = asArray(result?.products?.product).map((p) => withAffiliateLink(compactProduct(p), p));
       // Never fail silently: report ids the API didn't return (not in the affiliate program, or delisted).
       const missing = ids.filter((id) => !products.some((p) => p.id === id));
+      // Items outside the affiliate program (common for SuperDeals/Choice listings): read the item page instead.
+      const fromSite = await Promise.all(missing.slice(0, 5).map((id) =>
+        scrapeProduct(id, env).then((p) => ({ ...p, source: "site" })).catch(() => null)));
+      for (const p of fromSite) if (p) { products.push(p); missing.splice(missing.indexOf(p.id), 1); }
       return {
         source: "api",
         products,
         not_found: missing.length
-          ? missing.map((id) => `${id}: not returned by the affiliate API (may not be in the affiliate program); try get_reviews or the item page`)
+          ? missing.map((id) => `${id}: not in the affiliate catalog and the item page couldn't be read`)
           : undefined,
         unresolved,
       };
