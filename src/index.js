@@ -4,7 +4,7 @@
 import { TOOLS } from "./tools.js";
 import { keepAlive } from "./pdp.js";
 
-const SERVER_INFO = { name: "shopscout-mcp", version: "0.6.0" };
+const SERVER_INFO = { name: "shopscout-mcp", version: "0.7.0" };
 const DEFAULT_PROTOCOL = "2025-06-18";
 
 const json = (body, status = 200) =>
@@ -30,9 +30,9 @@ async function handleMessage(msg, env) {
           "AliExpress product search, details and reviews. search_products reads the real site results by default (same items, prices, deal badges and shipping text the site shows); source 'api' uses the affiliate catalog, which misses many deal items. " +
           "Results are compact text; call get_product for one item's details. Prices are in the configured currency and ship-to country. " +
           "Use the shipping field when present. For shortlisted items (at most 5) call check_price: it returns the owner's own price, shipping, total and deals (bundle=true for Bundle deals prices). get_cart reads the owner's cart (read-only). bundle_deals lists Bundle deals items by keyword (loading more pages as needed). " +
-          "Only if check_price reports an expired session, check the shipping fee for each shortlisted item " +
-          "(at most ~5) with the browser extension if available: open the item page, read the page text (avoid screenshots), " +
-          "and report item price + shipping = total. If no browser is available, say clearly that prices exclude shipping.",
+          "get_product (affiliate items) and search_products with_shipping=true include shipping from the official API; get_shipping gives the fee for any item given its sku_id and price. " +
+          "If check_price reports an expired session it falls back to API prices + shipping; only for items it still can't price, check the item page with the browser extension (page text, no screenshots). " +
+          "Always report item price + shipping = total.",
       });
     case "ping":
       return rpcResult(id, {});

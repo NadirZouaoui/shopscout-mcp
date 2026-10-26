@@ -5,14 +5,25 @@ import { bundleDeals } from "./bundle.js";
 
 // Public price (no shipping) when the session can't be used.
 async function publicFallback(id, env) {
+  // Affiliate catalog gives price + sku; the Advanced API then gives shipping.
+  try {
+    const r = await callApi(env, "aliexpress.affiliate.productdetail.get", {
+      product_ids: id, target_currency: env.CURRENCY || "EUR", target_language: env.LANGUAGE || "EN", country: env.SHIP_TO || "DZ",
+    });
+    const p = asArray(r?.products?.product)[0];
+    if (p) {
+      const [c] = await addShipping(env, [compactProduct(p)], 1);
+      return { ...c, url: c.link, link: undefined, source: "api (public price, not personalised)" };
+    }
+  } catch {}
   try {
     const p = await scrapeProduct(id, env);
-    return { ...p, url: `https://www.aliexpress.com/item/${id}.html`, source: "public", shipping: "unknown (session expired)" };
+    return { ...p, url: `https://www.aliexpress.com/item/${id}.html`, source: "public", shipping: "unknown (session expired, not in affiliate catalog)" };
   } catch (e) {
     return { id, error: `session expired and public page unreadable: ${e.message}` };
   }
 }
-import { callApi, compactProduct, withAffiliateLink, asArray } from "./aliexpress.js";
+import { callApi, compactProduct, withAffiliateLink, asArray, addShipping, apiShipping } from "./aliexpress.js";
 import { scrapeSearch, scrapeProduct, scrapeReviews } from "./scrape.js";
 
 // "api" when keys are configured, otherwise "scrape". MODE env var overrides.
@@ -106,6 +117,7 @@ async function apiSearch(args, env) {
         tracking_id: env.AE_TRACKING_ID,
       });
       const products = asArray(result?.products?.product).map(compactProduct);
+      if (args.with_shipping) await addShipping(env, products, 10);
       // The API's volume sort uses its own sales counter, not the 30-day figure we show,
       // so re-sort the page by orders_30d to match what the user sees.
       if (args.sort === "LAST_VOLUME_DESC") products.sort((a, b) => (b.orders_30d || 0) - (a.orders_30d || 0));
@@ -132,6 +144,7 @@ export const TOOLS = [
         },
         min_price: { type: "number" },
         max_price: { type: "number" },
+        with_shipping: { type: "boolean", description: "Add shipping fee + total to affiliate-catalog results (first 10; slower, ~1s per item)" },
         page: { type: "integer", minimum: 1, default: 1 },
         page_size: { type: "integer", minimum: 1, maximum: 50, default: 10 },
         source: { type: "string", enum: ["site", "api", "both"], default: "site" },
@@ -194,6 +207,7 @@ export const TOOLS = [
         tracking_id: env.AE_TRACKING_ID,
       });
       const products = asArray(result?.products?.product).map((p) => withAffiliateLink(compactProduct(p), p));
+      await addShipping(env, products, 5);
       // Never fail silently: report ids the API didn't return (not in the affiliate program, or delisted).
       const missing = ids.filter((id) => !products.some((p) => p.id === id));
       // Items outside the affiliate program (common for SuperDeals/Choice listings): read the item page instead.
@@ -293,6 +307,28 @@ export const TOOLS = [
         unresolved: failed.length ? failed : undefined,
         skipped: ids.length > 5 ? ids.slice(5) : undefined,
       };
+    },
+  },
+  {
+    name: "get_shipping",
+    description:
+      "Shipping fee and delivery days to the configured country for one item variant, from the official API (works for any item, " +
+      "no login needed). Needs the product id, the variant's sku_id (from get_cart, check_price variants or get_product) and its price in EUR.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        product: { type: "string", description: "Product id or URL" },
+        sku_id: { type: "string" },
+        price_eur: { type: "number" },
+      },
+      required: ["product", "sku_id", "price_eur"],
+    },
+    async run(args, env) {
+      const { ids: [id] } = await toIds(args.product);
+      const sh = await apiShipping(env, { product_id: id, sku_id: args.sku_id, price: args.price_eur });
+      const total = sh.fee_eur != null ? Math.round((args.price_eur + sh.fee_eur) * 100) / 100 : null;
+      return { id, url: `https://www.aliexpress.com/item/${id}.html`, price_eur: args.price_eur, shipping: sh, total_eur: total,
+        total_dzd: total != null ? Math.round(total * 280) : null };
     },
   },
   {

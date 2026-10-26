@@ -16,6 +16,7 @@ const data = {
   data: {
     app_cart_product_component_group_ahe_product_1: product(1, 1005009412750740, 81.83, 143.55, "5.95", false, "Mi Box S 3rd Gen"),
     app_cart_product_component_group_ahe_product_2: product(2, 1005006439886497, 11.33, 23.61, null, true, "WIFI6 FU-AX1800"),
+    app_cart_product_component_group_ahe_product_3: { fields: { productExtend: { productExtInfo: JSON.stringify({ itemId: "1005009412750740" }) } } },
     cart_group_shop_header_ahe_global_shop_9_shop_header: { fields: { title: "Goldway Store", cartLineIds: [1] } },
     app_cart_summary_component_summary: { fields: {
       selectItemNum: 2,
@@ -25,6 +26,9 @@ const data = {
   },
 };
 const c = parseCart(data);
+const bad = c.items.find((i) => i.available === false);
+ok("unavailable line kept with id", bad?.id === "1005009412750740" && bad.selected === false);
+c.items = c.items.filter((i) => i.available !== false);
 ok("cart items", c.items.length === 2 && c.items[0].url === "https://www.aliexpress.com/item/1005009412750740.html");
 ok("cart shipping + line total", c.items[0].shipping_eur === 5.95 && c.items[0].line_total_eur === 87.78 && c.items[1].shipping_eur === 0);
 ok("cart store + variant", c.items[0].store === "Goldway Store" && c.items[1].variant === "WIFI6 FU-AX1800");

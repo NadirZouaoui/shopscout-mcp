@@ -30,6 +30,16 @@ export function parseCart(data) {
     if (!k.startsWith("app_cart_product_component")) continue;
     const f = v.fields || {};
     const iv = f.itemView || {};
+    if (!iv.itemId) {
+      // Invalid / sold-out lines use a different layout: keep what can be read.
+      let ext = {};
+      try { ext = JSON.parse(f.productExtend?.productExtInfo || "{}"); } catch {}
+      const id = ext.itemId || f.itemId;
+      items.push({ id: id ? String(id) : undefined, url: id ? `https://www.aliexpress.com/item/${id}.html` : undefined,
+        title: iv.title || f.title, available: false,
+        note: "Unavailable in cart (sold out, removed by seller or not shippable)", selected: false });
+      continue;
+    }
     const lv = f.logisticsView || {};
     const show = (f.priceViews || []).find((p) => p.priceType === "showPrice") || (f.priceViews || [])[0] || {};
     const crossed = (f.priceViews || []).find((p) => p.priceType === "crossedPrice");

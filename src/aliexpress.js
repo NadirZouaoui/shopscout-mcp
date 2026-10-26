@@ -71,6 +71,8 @@ export function compactProduct(p) {
     category: [p.first_level_category_name, p.second_level_category_name].filter(Boolean).join(" > ") || undefined,
     shop: p.shop_name,
     link: `https://www.aliexpress.com/item/${p.product_id}.html`,
+    sku_id: p.sku_id ? String(p.sku_id) : undefined,
+    price_eur: p.target_sale_price && (p.target_sale_price_currency || "EUR") === "EUR" ? Number(p.target_sale_price) : undefined,
   };
 }
 
@@ -82,4 +84,53 @@ export function withAffiliateLink(compact, p) {
 export function asArray(x) {
   if (!x) return [];
   return Array.isArray(x) ? x : [x];
+}
+
+// Advanced API: shipping fee for one product + SKU at a given price, to the configured country.
+// Works for any item (not only the affiliate catalog); sku_id is mandatory.
+// Response: { shipping_fee, min_delivery_days, max_delivery_days, delivery_days, ship_from_country }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+export async function apiShipping(env, { product_id, sku_id, price }) {
+  if (!sku_id) return { fee_eur: null, error: "no sku_id" };
+  const params = {
+    product_id, sku_id, target_sale_price: price, target_currency: env.CURRENCY || "EUR",
+    target_language: env.LANGUAGE || "EN", ship_to_country: env.SHIP_TO || "DZ", tax_rate: 0,
+  };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return parseShipping(await callApi(env, "aliexpress.affiliate.product.shipping.get", params));
+    } catch (e) {
+      // The app gets a short ban when calls come too close together: wait and retry.
+      if (/ApiCallLimit/.test(e.message) && attempt < 2) { await sleep(1500 * (attempt + 1)); continue; }
+      return { fee_eur: null, error: e.message };
+    }
+  }
+}
+
+export function parseShipping(r) {
+  if (!r || r.shipping_fee === undefined || r.shipping_fee === "") return { fee_eur: null, error: "no shipping offered to this country" };
+  const min = r.min_delivery_days, max = r.max_delivery_days ?? r.delivery_days;
+  return {
+    fee_eur: Number(r.shipping_fee),
+    delivery_days: min && max ? (min === max ? `${min}` : `${min}-${max}`) : max || undefined,
+    ships_from: r.ship_from_country || undefined,
+  };
+}
+
+// Add shipping + totals to compact products that carry sku_id and a numeric price (sequential, spaced calls).
+export async function addShipping(env, products, limit = 5) {
+  const DZD = 280;
+  let n = 0;
+  for (const p of products) {
+    if (n >= limit) break;
+    if (!p.sku_id || p.price_eur == null || p.shipping) continue;
+    if (n++) await sleep(1100);
+    const sh = await apiShipping(env, { product_id: p.id, sku_id: p.sku_id, price: p.price_eur });
+    p.shipping = sh.fee_eur == null ? { error: sh.error } : sh;
+    if (sh.fee_eur != null) {
+      p.total_eur = Math.round((p.price_eur + sh.fee_eur) * 100) / 100;
+      p.total_dzd = Math.round(p.total_eur * DZD);
+    }
+  }
+  return products;
 }
