@@ -133,6 +133,8 @@ function tagsOf(o) {
     original_price: original,
     shipping,
     tags: tags.length ? tags.slice(0, 6) : undefined,
+    // "New shoppers save €x": the shown price is the first-order price, not the regular one.
+    new_shopper_price: tags.some((t) => /new (shoppers?|users?|customers?|buyers?)/i.test(t)) || undefined,
   };
 }
 

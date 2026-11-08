@@ -2,6 +2,7 @@ import { sessionProbe } from "./session.js";
 import { checkPrice, SessionError, bundleBasket } from "./pdp.js";
 import { getCart } from "./cart.js";
 import { bundleDeals } from "./bundle.js";
+import { deepSearch } from "./deep.js";
 
 // Public price (no shipping) when the session can't be used.
 async function publicFallback(id, env) {
@@ -125,6 +126,21 @@ async function apiSearch(args, env) {
       return { source: "api", total: result?.total_record_count, page: result?.current_page_no, products };
 }
 
+// Personalised price + shipping for a few ids, sequentially, falling back to public prices if the session expired.
+async function verifyPrices(ids, env) {
+  const results = [];
+  let expired = false;
+  for (const id of ids.slice(0, 5)) {
+    if (expired) { results.push(await publicFallback(id, env)); continue; }
+    try { results.push(await checkPrice(id, env, { fresh: false, bundle: false })); }
+    catch (e) {
+      if (e instanceof SessionError) { expired = true; results.push(await publicFallback(id, env)); }
+      else results.push({ id, error: String(e.message || e) });
+    }
+  }
+  return results;
+}
+
 export const TOOLS = [
   {
     name: "search_products",
@@ -132,7 +148,11 @@ export const TOOLS = [
       "Search products by keyword. Default source 'site' reads the real AliExpress search results (same items and prices " +
       "the site shows, including SuperDeals/Choice items, deal badges and shipping text when shown). Source 'api' uses the " +
       "affiliate catalog (only items in the affiliate program; returns 30-day orders). 'both' merges them. " +
-      "Use get_product with ids for details.",
+      "Use get_product with ids for details. Items whose price is a new-shopper price are flagged (new_shopper_price) — " +
+      "that is not what a returning customer pays. For 'find the best price for <product>' use deep=true: it runs several " +
+      "query variants and pages (a single search returns a capped, ranked set and can omit matching listings), drops accessories, " +
+      "sorts real prices first, and with verify_top=N adds the owner's price + shipping + total for the N cheapest. " +
+      "Pass aliases (other model names, sibling numbers, size suffixes) to widen it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -148,10 +168,21 @@ export const TOOLS = [
         page: { type: "integer", minimum: 1, default: 1 },
         page_size: { type: "integer", minimum: 1, maximum: 50, default: 10 },
         source: { type: "string", enum: ["site", "api", "both"], default: "site" },
+        deep: { type: "boolean", description: "Best-price mode: several query variants and pages, accessories removed, real prices first (site search only)" },
+        aliases: { type: "array", items: { type: "string" }, description: "deep only: other model names the same product is listed under, e.g. [\"MT720L\"]" },
+        pages: { type: "integer", minimum: 1, maximum: 4, description: "deep only: result pages per query (default 2)" },
+        verify_top: { type: "integer", minimum: 0, maximum: 5, description: "deep only: add personalised price, shipping and total for the N cheapest candidates (uses the owner's session)" },
+        include_accessories: { type: "boolean", description: "deep only: keep grips, skates, cases, spare parts in the results" },
       },
       required: ["keywords"],
     },
     async run(args, env) {
+      if (args.deep) {
+        return deepSearch(args, {
+          search: (a) => scrapeSearch(a, env),
+          verify: args.verify_top ? (ids) => verifyPrices(ids, env) : undefined,
+        });
+      }
       const source = mode(env) === "scrape" ? "site" : (args.source || "site");
       if (source === "site") {
         try { return await scrapeSearch(args, env); }

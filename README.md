@@ -21,6 +21,19 @@ Set `MODE = "api"` or `"scrape"` in `wrangler.toml` to force one.
 
 Results are trimmed to the fields that matter for comparison, so they stay small in chat.
 
+### Best-price search (`search_products` with `deep: true`)
+
+AliExpress search returns a capped, ranked set per query, padded with loosely related items, and can omit listings that do match (a "Rapoo MT760/MT720L" listing, the cheapest, did not appear for "rapoo mt760" or "mt760"; a narrower "MT720L" query surfaced it). The cause is not confirmed. Deep mode varies the query to change which listings make the cut:
+
+- runs several query variants and `pages` result pages (default 2): the query as given, the bare model token, any `aliases` you pass, and sibling model names found in matching titles;
+- keeps only titles that mention the product and drops accessories (grips, skates, cases, spare PCBs) unless `include_accessories` is set;
+- flags `new_shopper_price` (the shown price is the first-order price, not what a returning customer pays) and lists regular prices first, cheapest first;
+- with `verify_top: N` (max 5) adds the owner's price, shipping and total for the N cheapest candidates, and re-sorts by that total.
+
+Coverage is not guaranteed. If results look thin, pass `aliases` (other model names, sibling numbers, size suffixes) or distinctive title words.
+
+Plain searches also carry `new_shopper_price` when the card shows a "New shoppers save" badge.
+
 ## Setup
 
 Requirements: Node.js 18+ and a free Cloudflare account. API mode also needs an approved app on the AliExpress Open Platform.
